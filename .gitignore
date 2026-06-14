@@ -1,0 +1,23 @@
+# Downloaded mods + run output
+downloads/
+*.package
+
+# Bundled Playwright browser (huge; produced by build scripts)
+ms-playwright/
+
+# PyInstaller build artifacts
+build/
+dist/
+*.spec
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# OS / editor
+.DS_Store
+.idea/
+.vscode/
