@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import csv
+import glob
 import json
 from collections.abc import Iterable
 from datetime import datetime, timezone
@@ -11,6 +12,19 @@ from pathlib import Path
 from .models import Item
 
 MANIFEST_NAME = "manifest.json"
+
+
+def existing_download(folder, item_id: str) -> Path | None:
+    """Return an already-downloaded file for ``item_id`` if one is present in
+    ``folder`` (files are named ``<id>-<name>``), else ``None``. Lets a re-run
+    skip items whose file exists even without a manifest entry."""
+    folder = Path(folder)
+    if not folder.is_dir() or not item_id:
+        return None
+    for p in folder.glob(f"{glob.escape(item_id)}-*"):
+        if p.is_file():
+            return p
+    return None
 
 _CSV_COLUMNS = [
     "id",

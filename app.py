@@ -331,13 +331,18 @@ class App:
                         if item is None:
                             break
                         try:
+                            existing = storage.existing_download(folder, item.id)
                             with lock:
                                 already = manifest.is_done(item)
+                                if existing and not already:
+                                    # File present but not in manifest -> record it.
+                                    manifest.mark(item, "done", existing.name)
+                                    already = True
                             if already:
                                 with lock:
                                     stats["skipped"] += 1
                                     stats["processed"] += 1
-                                self._log(f"  kihagyva (már letöltve): {item.title}")
+                                self._log(f"  kihagyva (fájl már létezik): {item.title}")
                             else:
                                 path = dl.download(item, folder, self.stop_event)
                                 with lock:
