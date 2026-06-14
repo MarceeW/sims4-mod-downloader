@@ -81,6 +81,14 @@ class DownloaderUnavailable(RuntimeError):
     """Raised when Playwright (or its browser) is not installed."""
 
 
+def ensure_available(headless: bool = True) -> None:
+    """Probe that Playwright + Chromium can actually launch (launches and closes
+    a browser once). Raises :class:`DownloaderUnavailable` otherwise. Useful as a
+    one-time check before spawning several parallel downloader threads."""
+    with TSRDownloader(headless=headless):
+        pass
+
+
 def _dest_name(item: Item, suggested: str) -> str:
     """``<id>-<server filename>`` (sanitized), keeping the server's extension."""
     suggested = _SAFE.sub("_", suggested).strip("_") or "download"

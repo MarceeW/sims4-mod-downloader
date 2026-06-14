@@ -88,6 +88,12 @@ class App:
             side="left", padx=(2, 12)
         )
 
+        ttk.Label(opts, text="Párhuzamos letöltés:").pack(side="left")
+        self.workers_var = tk.IntVar(value=3)
+        ttk.Spinbox(opts, from_=1, to=8, width=4, textvariable=self.workers_var).pack(
+            side="left", padx=(2, 12)
+        )
+
         row += 1
         opts2 = ttk.Frame(frm)
         opts2.grid(row=row, column=0, columnspan=3, sticky="ew", **pad)
@@ -169,6 +175,7 @@ class App:
             "entries": entries,
             "end_page": None if self.all_pages_var.get() else int(self.end_page_var.get()),
             "max_items": int(self.max_items_var.get()),
+            "workers": max(1, int(self.workers_var.get())),
             "metadata_only": self.metadata_only_var.get(),
             "headless": self.headless_var.get(),
             "folder": folder,
@@ -201,23 +208,21 @@ class App:
     def _do_scrape(self, cfg: dict) -> None:
         entries = cfg["entries"]
         max_items = cfg["max_items"]
-        items: list = []
-        downloader_cm = None
-        downloader = None
+        folder = cfg["folder"]
+        delay = cfg["delay"]
+        metadata_only = cfg["metadata_only"]
+        workers = cfg["workers"] if not metadata_only else 1
 
-        # Set up the downloader lazily (only if we will download files).
-        if not cfg["metadata_only"]:
-            from tsr.downloader import TSRDownloader, DownloaderUnavailable
+        # Verify Playwright/Chromium can launch once, before spawning N threads.
+        if not metadata_only:
+            from tsr.downloader import ensure_available, DownloaderUnavailable
             try:
-                downloader_cm = TSRDownloader(headless=cfg["headless"], on_log=self._log)
-                downloader = downloader_cm.__enter__()
+                ensure_available(cfg["headless"])
             except DownloaderUnavailable as exc:
                 self._log(f"! {exc}")
                 self._log("Visszaváltás csak metaadat módra erre a futásra.")
-                cfg["metadata_only"] = True
-
-        done = failed = skipped = 0
-        manifest = storage.Manifest(cfg["folder"]) if not cfg["metadata_only"] else None
+                metadata_only = True
+                workers = 1
 
         # Resolve the page range for every entry up front so we can show a real
         # progress bar (estimated total = pages * items-per-page, capped by
@@ -240,63 +245,153 @@ class App:
             estimated = min(estimated, max_items) if estimated else max_items
         total = max(1, estimated)
         self._log(f"Becsült összes elem: ~{estimated}")
+        if not metadata_only:
+            self._log(f"Párhuzamos letöltők: {workers}")
 
-        def push_status(current_title: str = "") -> None:
-            self.q.put(("progress", (len(items), total)))
+        # Shared state across producer + consumer threads.
+        lock = threading.Lock()
+        stats = {"scraped": 0, "processed": 0, "done": 0, "failed": 0, "skipped": 0}
+        items: list = []
+        manifest = storage.Manifest(folder) if not metadata_only else None
+        reached_max = threading.Event()
+
+        def push_status(title: str = "") -> None:
+            with lock:
+                shown = stats["scraped"] if metadata_only else stats["processed"]
+                s = dict(stats)
+            self.q.put(("progress", (shown, total)))
             self.q.put((
                 "status",
-                f"{len(items)}/~{estimated} • letöltve={done} hibás={failed} "
-                f"kihagyva={skipped}" + (f" • {current_title}" if current_title else ""),
+                f"{shown}/~{estimated} • letöltve={s['done']} hibás={s['failed']} "
+                f"kihagyva={s['skipped']}" + (f" • {title}" if title else ""),
             ))
 
-        try:
-            for category, start, end in plan:
-                if self.stop_event.is_set():
-                    break
-                for item in scraper.iter_items(
-                    category, start, end,
-                    stop_event=self.stop_event,
-                    on_log=self._log,
-                    delay_range=cfg["delay"],
-                ):
-                    if self.stop_event.is_set():
-                        break
-                    items.append(item)
+        def save_metadata_snapshot() -> None:
+            with lock:
+                snapshot = list(items)
+            if snapshot:
+                storage.export_metadata(snapshot, folder)
 
-                    if not cfg["metadata_only"] and downloader is not None:
-                        if manifest.is_done(item):
-                            skipped += 1
-                            self._log(f"  kihagyva (már letöltve): {item.title}")
+        item_q: queue.Queue = queue.Queue(maxsize=max(4, workers * 4))
+
+        # -- producer: scrape items, feed the download queue ---------------
+        def produce() -> None:
+            try:
+                for category, start, end in plan:
+                    if self.stop_event.is_set() or reached_max.is_set():
+                        break
+                    for item in scraper.iter_items(
+                        category, start, end,
+                        stop_event=self.stop_event,
+                        on_log=self._log,
+                        delay_range=delay,
+                    ):
+                        if self.stop_event.is_set() or reached_max.is_set():
+                            break
+                        with lock:
+                            items.append(item)
+                            stats["scraped"] += 1
+                            n = stats["scraped"]
+                        if metadata_only:
+                            push_status(f"{item.title} — {item.creator}")
+                            if n % 10 == 0:
+                                save_metadata_snapshot()
                         else:
-                            path = downloader.download(item, cfg["folder"], self.stop_event)
-                            if path:
-                                done += 1
-                                manifest.mark(item, "done", path.name)
+                            # Block politely if consumers are saturated.
+                            while not self.stop_event.is_set():
+                                try:
+                                    item_q.put(item, timeout=1)
+                                    break
+                                except queue.Full:
+                                    continue
+                        if max_items and n >= max_items:
+                            reached_max.set()
+                            break
+            finally:
+                # Unblock every consumer with a sentinel.
+                for _ in range(workers):
+                    try:
+                        item_q.put_nowait(None)
+                    except queue.Full:
+                        try:
+                            item_q.put(None, timeout=2)
+                        except queue.Full:
+                            pass
+
+        # -- consumer: own browser, download items off the queue -----------
+        def consume(wid: int) -> None:
+            from tsr.downloader import TSRDownloader, DownloaderUnavailable
+            try:
+                with TSRDownloader(headless=cfg["headless"], on_log=self._log) as dl:
+                    while not self.stop_event.is_set():
+                        try:
+                            item = item_q.get(timeout=1)
+                        except queue.Empty:
+                            continue
+                        if item is None:
+                            break
+                        try:
+                            with lock:
+                                already = manifest.is_done(item)
+                            if already:
+                                with lock:
+                                    stats["skipped"] += 1
+                                    stats["processed"] += 1
+                                self._log(f"  kihagyva (már letöltve): {item.title}")
                             else:
-                                failed += 1
-                                manifest.mark(item, "failed")
-                        time.sleep(random.uniform(*cfg["delay"]))
+                                path = dl.download(item, folder, self.stop_event)
+                                with lock:
+                                    if path:
+                                        stats["done"] += 1
+                                    else:
+                                        stats["failed"] += 1
+                                    stats["processed"] += 1
+                                    manifest.mark(item, "done" if path else "failed",
+                                                  path.name if path else None)
+                                    snap = stats["processed"] % 10 == 0
+                                if snap:
+                                    save_metadata_snapshot()
+                                time.sleep(random.uniform(*delay))
+                            push_status(f"{item.title} — {item.creator}")
+                        finally:
+                            item_q.task_done()
+            except DownloaderUnavailable as exc:
+                self._log(f"  ! letöltő szál #{wid} nem indult: {exc}")
+            except Exception as exc:  # keep one bad worker from killing the run
+                self._log(f"  ! letöltő szál #{wid} hiba: {exc}")
 
-                    push_status(f"{item.title} — {item.creator}")
-
-                    if max_items and len(items) >= max_items:
-                        self._log(f"Elérve a max. elemszám ({max_items}).")
-                        break
-
-                if max_items and len(items) >= max_items:
-                    break
+        # -- orchestrate ---------------------------------------------------
+        try:
+            producer = threading.Thread(target=produce, name="scraper", daemon=True)
+            producer.start()
+            if metadata_only:
+                producer.join()
+            else:
+                consumers = [
+                    threading.Thread(target=consume, args=(i + 1,),
+                                     name=f"dl-{i+1}", daemon=True)
+                    for i in range(workers)
+                ]
+                for c in consumers:
+                    c.start()
+                producer.join()
+                for c in consumers:
+                    c.join()
+            if reached_max.is_set():
+                self._log(f"Elérve a max. elemszám ({max_items}).")
         finally:
-            if downloader_cm is not None:
-                downloader_cm.__exit__(None, None, None)
-
-        # Always export metadata for whatever we collected (all entries combined).
-        if items:
-            written = storage.export_metadata(items, cfg["folder"])
+            written = []
+            with lock:
+                if items:
+                    written = storage.export_metadata(list(items), folder)
             for p in written:
                 self._log(f"Mentve: {p}")
+
+        with lock:
+            s = dict(stats)
         self._log(
-            f"Kész. elemek={len(items)} letöltve={done} "
-            f"hibás={failed} kihagyva={skipped}"
+            f"Kész. elemek={s['scraped']} letöltve={s['done']} "
+            f"hibás={s['failed']} kihagyva={s['skipped']}"
         )
 
     # -- queue draining (main thread) -------------------------------------
