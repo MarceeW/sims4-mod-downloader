@@ -18,10 +18,8 @@ import tkinter as tk
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 
-from tsr import ITEMS_PER_PAGE, scraper, storage
+from tsr import ITEMS_PER_PAGE, config, scraper, storage
 from tsr.scraper import ScrapeError
-
-DEFAULT_URL = "https://www.thesimsresource.com/downloads/browse/category/sims4-mods/"
 
 TOS_NOTICE = (
     "Ez az eszköz a thesimsresource.com normál, ingyenes letöltési folyamatát "
@@ -45,8 +43,10 @@ class App:
         self.worker: threading.Thread | None = None
         self.stop_event = threading.Event()
         self._tos_acknowledged = False
+        self._config = config.load_config()
 
         self._build_ui()
+        self._apply_config()
         self.root.after(100, self._poll_queue)
 
     # -- UI construction ---------------------------------------------------
@@ -59,7 +59,6 @@ class App:
         row = 0
         ttk.Label(frm, text="Belépő URL-ek\n(soronként egy):").grid(row=row, column=0, sticky="nw", **pad)
         self.url_text = tk.Text(frm, height=3, wrap="none")
-        self.url_text.insert("1.0", DEFAULT_URL)
         self.url_text.grid(row=row, column=1, columnspan=2, sticky="ew", **pad)
 
         row += 1
@@ -136,6 +135,33 @@ class App:
         sb = ttk.Scrollbar(log_frame, command=self.log_text.yview)
         sb.grid(row=0, column=1, sticky="ns")
         self.log_text.config(yscrollcommand=sb.set)
+
+    def _apply_config(self) -> None:
+        """Populate the controls from config.json (entry URLs + optional
+        defaults). Anything not present keeps the built-in widget default."""
+        c = self._config
+        urls = config.entry_urls(c)
+        if urls:
+            self.url_text.delete("1.0", "end")
+            self.url_text.insert("1.0", "\n".join(urls))
+
+        def _set(key, var, cast):
+            if key in c:
+                try:
+                    var.set(cast(c[key]))
+                except (TypeError, ValueError):
+                    pass
+
+        _set("download_folder", self.folder_var, str)
+        _set("workers", self.workers_var, int)
+        _set("max_items", self.max_items_var, int)
+        _set("end_page", self.end_page_var, int)
+        _set("all_pages", self.all_pages_var, bool)
+        _set("delay_min", self.delay_min_var, float)
+        _set("delay_max", self.delay_max_var, float)
+        _set("headless", self.headless_var, bool)
+        _set("metadata_only", self.metadata_only_var, bool)
+        self._toggle_all_pages()
 
     # -- small UI handlers -------------------------------------------------
     def _toggle_all_pages(self) -> None:

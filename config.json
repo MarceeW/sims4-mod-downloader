@@ -1,0 +1,11 @@
+{
+  "entry_urls": [
+    "https://www.thesimsresource.com/downloads/browse/category/sims4-mods/"
+  ],
+  "download_folder": "downloads",
+  "workers": 3,
+  "delay_min": 2.0,
+  "delay_max": 4.0,
+  "headless": true,
+  "metadata_only": false
+}

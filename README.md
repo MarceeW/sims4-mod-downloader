@@ -37,7 +37,8 @@ Linux distros install it via the system package manager (e.g. `apt install pytho
 1. **Entry URLs** — paste one or more browse listings on `thesimsresource.com`,
    **one per line** (a different category like `.../category/sims4-clothing/`, or
    a mid-list page `.../page/5/`). Each entry is crawled across its pages in turn;
-   the domain is locked to thesimsresource.com.
+   the domain is locked to thesimsresource.com. The field is **pre-filled from
+   `config.json`** (see below) — there is no hard-coded default URL.
 2. **End page** / **All pages** — how far to crawl from the entry page.
 3. **Max items** — cap per run (`0` = no limit). Keep it small for a first test.
 4. **Download folder** — where files + `metadata.*` + `manifest.json` are written.
@@ -45,6 +46,31 @@ Linux distros install it via the system package manager (e.g. `apt install pytho
 6. **Headless browser** — uncheck to watch the download flow while testing.
 7. **Start** / **Stop**. Re-running resumes: items already downloaded (tracked in
    `manifest.json`) are skipped.
+
+## Configuration (`config.json`)
+
+The download URLs and default settings are read from `config.json` at startup
+(next to the executable when packaged, otherwise the working directory). Edit it
+to set which links to download — no URL is hard-coded in the app:
+
+```json
+{
+  "entry_urls": [
+    "https://www.thesimsresource.com/downloads/browse/category/sims4-mods/",
+    "https://www.thesimsresource.com/downloads/browse/category/sims4-clothing/"
+  ],
+  "download_folder": "downloads",
+  "workers": 3,
+  "delay_min": 2.0,
+  "delay_max": 4.0,
+  "headless": true,
+  "metadata_only": false
+}
+```
+
+Only `entry_urls` is required; every other key is optional and falls back to the
+GUI default if omitted. If `config.json` is missing, the URL field starts empty
+and you paste links manually.
 
 ## Please note
 
