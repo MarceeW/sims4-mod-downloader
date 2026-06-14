@@ -18,7 +18,7 @@ import tkinter as tk
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 
-from tsr import ITEMS_PER_PAGE, config, scraper, storage
+from tsr import config, scraper, storage
 from tsr.scraper import ScrapeError
 
 TOS_NOTICE = (
@@ -71,25 +71,25 @@ class App:
         opts = ttk.Frame(frm)
         opts.grid(row=row, column=0, columnspan=3, sticky="ew", **pad)
 
-        ttk.Label(opts, text="Utolsó oldal:").pack(side="left")
+        ttk.Label(opts, text="Max oldal/URL:").pack(side="left")
         self.end_page_var = tk.IntVar(value=1)
-        self.end_spin = ttk.Spinbox(opts, from_=1, to=100000, width=7, textvariable=self.end_page_var)
+        self.end_spin = ttk.Spinbox(opts, from_=1, to=1000000, width=7, textvariable=self.end_page_var)
         self.end_spin.pack(side="left", padx=(2, 12))
 
-        self.all_pages_var = tk.BooleanVar(value=False)
+        self.all_pages_var = tk.BooleanVar(value=True)
         ttk.Checkbutton(
             opts, text="Összes oldal", variable=self.all_pages_var, command=self._toggle_all_pages
         ).pack(side="left", padx=(0, 12))
 
         ttk.Label(opts, text="Max. elem (0=∞):").pack(side="left")
-        self.max_items_var = tk.IntVar(value=5)
-        ttk.Spinbox(opts, from_=0, to=100000, width=7, textvariable=self.max_items_var).pack(
+        self.max_items_var = tk.IntVar(value=0)
+        ttk.Spinbox(opts, from_=0, to=10000000, width=8, textvariable=self.max_items_var).pack(
             side="left", padx=(2, 12)
         )
 
         ttk.Label(opts, text="Párhuzamos letöltés:").pack(side="left")
         self.workers_var = tk.IntVar(value=3)
-        ttk.Spinbox(opts, from_=1, to=8, width=4, textvariable=self.workers_var).pack(
+        ttk.Spinbox(opts, from_=1, to=1000000, width=5, textvariable=self.workers_var).pack(
             side="left", padx=(2, 12)
         )
 
@@ -210,7 +210,14 @@ class App:
 
         self.stop_event.clear()
         self._set_running(True)
-        self.progress.config(value=0, maximum=100)
+        # Total is unknown with dynamic page-stepping: show a determinate bar only
+        # when a max-item cap is set, otherwise animate an indeterminate bar.
+        if cfg["max_items"]:
+            self.progress.stop()
+            self.progress.config(mode="determinate", maximum=cfg["max_items"], value=0)
+        else:
+            self.progress.config(mode="indeterminate", value=0)
+            self.progress.start(12)
         self.worker = threading.Thread(target=self._run_job, args=(cfg,), daemon=True)
         self.worker.start()
 
@@ -250,29 +257,15 @@ class App:
                 metadata_only = True
                 workers = 1
 
-        # Resolve the page range for every entry up front so we can show a real
-        # progress bar (estimated total = pages * items-per-page, capped by
-        # max_items if set).
+        # Pages are stepped dynamically via the "#" placeholder until each URL
+        # runs out, so the total is unknown up front (no estimate). "Max oldal/URL"
+        # caps pages per URL unless "Összes oldal" is set.
+        max_pages = cfg["end_page"]  # None when "Összes oldal" is checked
         self._log(f"{len(entries)} belépő URL a sorban.")
-        plan: list[tuple[str, int, int]] = []
-        for idx, (category, start) in enumerate(entries, 1):
-            if self.stop_event.is_set():
-                break
-            end = cfg["end_page"]
-            if end is None:
-                self._log(f"Oldalszám lekérése: '{category}'…")
-                end = scraper.get_total_pages(category)
-            end = max(start, end)
-            plan.append((category, start, end))
-            self._log(f"[{idx}/{len(entries)}. URL] '{category}', oldalak {start}…{end}.")
-
-        estimated = sum((end - start + 1) * ITEMS_PER_PAGE for _, start, end in plan)
-        if max_items:
-            estimated = min(estimated, max_items) if estimated else max_items
-        total = max(1, estimated)
-        self._log(f"Becsült összes elem: ~{estimated}")
         if not metadata_only:
             self._log(f"Párhuzamos letöltők: {workers}")
+        if max_pages:
+            self._log(f"Max oldal/URL: {max_pages}")
 
         # Shared state across producer + consumer threads.
         lock = threading.Lock()
@@ -285,10 +278,11 @@ class App:
             with lock:
                 shown = stats["scraped"] if metadata_only else stats["processed"]
                 s = dict(stats)
-            self.q.put(("progress", (shown, total)))
+            if max_items:  # determinate bar only when a cap is set
+                self.q.put(("progress", (shown, max_items)))
             self.q.put((
                 "status",
-                f"{shown}/~{estimated} • letöltve={s['done']} hibás={s['failed']} "
+                f"feldolgozva={shown} letöltve={s['done']} hibás={s['failed']} "
                 f"kihagyva={s['skipped']}" + (f" • {title}" if title else ""),
             ))
 
@@ -303,14 +297,16 @@ class App:
         # -- producer: scrape items, feed the download queue ---------------
         def produce() -> None:
             try:
-                for category, start, end in plan:
+                for idx, url in enumerate(entries, 1):
                     if self.stop_event.is_set() or reached_max.is_set():
                         break
+                    self._log(f"[{idx}/{len(entries)}. URL] {url}")
                     for item in scraper.iter_items(
-                        category, start, end,
+                        url,
                         stop_event=self.stop_event,
                         on_log=self._log,
                         delay_range=delay,
+                        max_pages=max_pages,
                     ):
                         if self.stop_event.is_set() or reached_max.is_set():
                             break
@@ -439,6 +435,8 @@ class App:
                     self.progress.config(maximum=max(1, total), value=cur)
                 elif kind == "done":
                     self._set_running(False)
+                    self.progress.stop()
+                    self.progress.config(mode="determinate")
                     self.progress.config(value=self.progress["maximum"])
                     self.status_var.set("Kész.")
         except queue.Empty:

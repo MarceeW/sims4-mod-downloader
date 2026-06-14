@@ -72,6 +72,29 @@ Only `entry_urls` is required; every other key is optional and falls back to the
 GUI default if omitted. If `config.json` is missing, the URL field starts empty
 and you paste links manually.
 
+### URL schemes and the `#` page placeholder
+
+Any `thesimsresource.com` listing URL works — category browse, a creator's
+`/members/<name>/...` page, or an `/artists/<name>/...` page. Put a **`#`** where
+the page number goes; the app substitutes `1, 2, 3 …` and **steps forward until
+the listing runs out** (it detects when a page repeats, since the site clamps
+overflow pages to the last one). Examples:
+
+```
+https://www.thesimsresource.com/downloads/browse/category/sims4-objects/page/#
+https://www.thesimsresource.com/members/VentaStudio/downloads/browse/category/sims4/page/#
+https://www.thesimsresource.com/artists/SIMcredible!/downloads/browse/category/sims4/skipsetitems/1/page/#
+```
+
+- The `#` must sit at the real page position — use `.../page/#`, **not** a bare
+  `.../<category>/#` (a trailing number after the category is ignored by the
+  site, so only page 1 would be fetched).
+- A URL without `#` is fetched once (single page).
+- There is **no limit** on the number of entry URLs or on parallel workers
+  (mind the rate-limit/resource trade-off described above).
+- "Összes oldal" steps every page; uncheck it and set "Max oldal/URL" to cap
+  pages per URL (handy for testing).
+
 ## Please note
 
 `robots.txt` disallows the download endpoint, and bulk automated downloading may
