@@ -34,11 +34,11 @@ Linux distros install it via the system package manager (e.g. `apt install pytho
 
 ## Usage
 
-1. **Entry URLs** — paste one or more browse listings on `thesimsresource.com`,
-   **one per line** (a different category like `.../category/sims4-clothing/`, or
-   a mid-list page `.../page/5/`). Each entry is crawled across its pages in turn;
-   the domain is locked to thesimsresource.com. The field is **pre-filled from
-   `config.json`** (see below) — there is no hard-coded default URL.
+1. **Creators** — type creator names (one per line, as in their profile URL,
+   e.g. `Leah_Lillith`); the app finds each creator and downloads all their Sims 4
+   work. **And/or Links** — paste listing URLs (one per line) with a `#` page
+   placeholder. Both fields are **pre-filled from `config.json`** (see below).
+   The domain is locked to thesimsresource.com.
 2. **End page** / **All pages** — how far to crawl from the entry page.
 3. **Max items** — cap per run (`0` = no limit). Keep it small for a first test.
 4. **Download folder** — where files + `metadata.*` + `manifest.json` are written.
@@ -55,9 +55,9 @@ to set which links to download — no URL is hard-coded in the app:
 
 ```json
 {
+  "creators": ["Leah_Lillith", "VentaStudio", "SIMcredible!"],
   "entry_urls": [
-    "https://www.thesimsresource.com/downloads/browse/category/sims4-mods/",
-    "https://www.thesimsresource.com/downloads/browse/category/sims4-clothing/"
+    "https://www.thesimsresource.com/downloads/browse/category/sims4-mods/page/#"
   ],
   "download_folder": "downloads",
   "workers": 3,
@@ -68,9 +68,13 @@ to set which links to download — no URL is hard-coded in the app:
 }
 ```
 
-Only `entry_urls` is required; every other key is optional and falls back to the
-GUI default if omitted. If `config.json` is missing, the URL field starts empty
-and you paste links manually.
+- **`creators`** — a list of creator names (as they appear in their profile URL,
+  e.g. `Leah_Lillith`). The app finds each creator's page automatically (it
+  tries `/members/` then `/artists/`) and downloads all their Sims 4 work.
+- **`entry_urls`** — explicit listing URLs (see the `#` placeholder above).
+- You can use either or both. At least one creator or URL is required. Every
+  other key is optional and falls back to the GUI default. If `config.json` is
+  missing, the fields start empty and you fill them in the window.
 
 ### URL schemes and the `#` page placeholder
 

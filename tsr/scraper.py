@@ -24,7 +24,7 @@ from urllib.parse import urlparse
 import requests
 from bs4 import BeautifulSoup
 
-from . import ALLOWED_HOST
+from . import ALLOWED_HOST, BASE
 from .models import Item
 
 USER_AGENT = (
@@ -88,6 +88,55 @@ def parse_entry_urls(text: str) -> list[str]:
     if not entries:
         raise ScrapeError("Adj meg legalább egy belépő URL-t.")
     return entries
+
+
+def creator_templates(name: str) -> list[str]:
+    """Build candidate listing-URL templates (with a ``#`` page placeholder) for
+    a creator name, covering both the ``/members/`` and ``/artists/`` paths.
+    ``skipsetitems/1`` avoids listing individual items of sets twice."""
+    name = (name or "").strip().lstrip("@").strip("/")
+    return [
+        f"{BASE}/members/{name}/downloads/browse/category/sims4/skipsetitems/1/page/#",
+        f"{BASE}/artists/{name}/downloads/browse/category/sims4/skipsetitems/1/page/#",
+    ]
+
+
+def _page_belongs_to(html: str, name: str) -> bool:
+    """True if page 1 mostly lists items by ``name``. An unknown creator name
+    silently falls back to the general Sims 4 listing (mixed creators), so we
+    confirm the items' ``minisiteName``/``creatorName`` match the requested name."""
+    target = (name or "").strip().lstrip("@").strip("/").lower()
+    soup = BeautifulSoup(html, "lxml")
+    names: list[str] = []
+    for wrap in soup.select("div.item-wrapper[data-item]"):
+        try:
+            d = json.loads(wrap["data-item"])
+        except (json.JSONDecodeError, TypeError, KeyError):
+            continue
+        names.append(str(d.get("minisiteName") or d.get("creatorName") or "").lower())
+    if not names:
+        return False
+    matches = sum(1 for n in names if n == target)
+    return matches >= len(names) * 0.6
+
+
+def resolve_creator(
+    name: str,
+    session: requests.Session | None = None,
+    on_log: Logger | None = None,
+) -> str | None:
+    """Return the working listing-URL template for a creator (tries members then
+    artists), or ``None`` if the name doesn't match a real creator page."""
+    session = session or _session()
+    for tmpl in creator_templates(name):
+        probe = tmpl.replace(PAGE_PLACEHOLDER, "1")
+        try:
+            html = _fetch(session, probe)
+        except requests.RequestException:
+            continue
+        if _page_belongs_to(html, name):
+            return tmpl
+    return None
 
 
 def _fetch(session: requests.Session, url: str) -> str:
