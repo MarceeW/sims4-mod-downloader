@@ -68,8 +68,8 @@ class App:
     def __init__(self, root: tk.Tk):
         self.root = root
         root.title("🌿 Sims 4 Mod Letöltő")
-        root.geometry("900x860")
-        root.minsize(780, 680)
+        root.geometry("900x820")
+        root.minsize(560, 420)
         root.configure(bg=BG)
 
         self.q: queue.Queue = queue.Queue()
@@ -145,13 +145,25 @@ class App:
         return tk.Label(parent, text=text, bg=CARD, fg=INK, font=self.f_body)
 
     def _button(self, parent, text, cmd, color, color_dk, small=False):
-        return tk.Button(
+        btn = tk.Button(
             parent, text=text, command=cmd,
             font=self.f_btn_sm if small else self.f_btn, fg="white", bg=color,
             activebackground=color_dk, activeforeground="white", relief="flat",
             bd=0, padx=(12 if small else 22), pady=(5 if small else 10),
             cursor="hand2", highlightthickness=0, disabledforeground="#EaEaEa",
         )
+
+        def _enter(_e):
+            if str(btn["state"]) != "disabled":
+                btn.config(bg=color_dk)
+
+        def _leave(_e):
+            if str(btn["state"]) != "disabled":
+                btn.config(bg=color)
+
+        btn.bind("<Enter>", _enter)
+        btn.bind("<Leave>", _leave)
+        return btn
 
     def _plumbob(self, parent) -> tk.Canvas:
         cv = tk.Canvas(parent, width=42, height=54, bg=GREEN, highlightthickness=0)
@@ -164,6 +176,8 @@ class App:
 
     # -- UI construction ---------------------------------------------------
     def _build_ui(self) -> None:
+        self._self_scroll: set = set()
+
         header = tk.Frame(self.root, bg=GREEN)
         header.pack(fill="x")
         inner = tk.Frame(header, bg=GREEN)
@@ -176,7 +190,28 @@ class App:
         tk.Label(titles, text="Töltsd le kedvenc alkotóid munkáit a The Sims Resource-ról",
                  bg=GREEN, fg="#EAFBEE", font=self.f_sub).pack(anchor="w")
 
-        body = tk.Frame(self.root, bg=BG)
+        # Scrollable surface: a canvas hosting the content frame, with a vertical
+        # scrollbar + mouse-wheel support so the whole UI works at any window size.
+        container = tk.Frame(self.root, bg=BG)
+        container.pack(fill="both", expand=True)
+        self.canvas = tk.Canvas(container, bg=BG, highlightthickness=0)
+        vsb = ttk.Scrollbar(container, orient="vertical", command=self.canvas.yview)
+        self.canvas.configure(yscrollcommand=vsb.set)
+        vsb.pack(side="right", fill="y")
+        self.canvas.pack(side="left", fill="both", expand=True)
+
+        scroll_host = tk.Frame(self.canvas, bg=BG)
+        self._body_win = self.canvas.create_window((0, 0), window=scroll_host, anchor="nw")
+        scroll_host.bind(
+            "<Configure>",
+            lambda _e: self.canvas.configure(scrollregion=self.canvas.bbox("all")))
+        self.canvas.bind(
+            "<Configure>",
+            lambda e: self.canvas.itemconfigure(self._body_win, width=e.width))
+        for seq in ("<MouseWheel>", "<Button-4>", "<Button-5>"):
+            self.root.bind_all(seq, self._on_wheel)
+
+        body = tk.Frame(scroll_host, bg=BG)
         body.pack(fill="both", expand=True, padx=18, pady=14)
 
         # --- Sources card -------------------------------------------------
@@ -263,15 +298,16 @@ class App:
         tk.Label(body, textvariable=self.status_var, bg=BG, fg=GREEN_DK,
                  font=self.f_body, anchor="w").pack(fill="x", pady=(6, 8))
 
-        # --- Log card (expands) ------------------------------------------
-        logc = self._card(body, "📜 Napló", expand=True)
-        self.log_text = tk.Text(logc, height=10, wrap="word", state="disabled",
+        # --- Log card ----------------------------------------------------
+        logc = self._card(body, "📜 Napló")
+        self.log_text = tk.Text(logc, height=12, wrap="word", state="disabled",
                                 font=self.f_mono, bg="#0F2417", fg="#CFF3D7",
                                 relief="flat", padx=10, pady=8, insertbackground="#CFF3D7")
         self.log_text.pack(side="left", fill="both", expand=True)
         sb = ttk.Scrollbar(logc, command=self.log_text.yview)
         sb.pack(side="right", fill="y")
         self.log_text.config(yscrollcommand=sb.set)
+        self._self_scroll.add(self.log_text)
 
     def _apply_config(self) -> None:
         """Populate the controls from config.json (creators, URLs + optional
@@ -344,6 +380,7 @@ class App:
         sb.pack(side="right", fill="y")
         lb.config(yscrollcommand=sb.set)
         lb.bind("<Double-Button-1>", lambda _e: self._remove_selected(lb))
+        self._self_scroll.add(lb)
         self._button(parent, "✕ Kijelölt törlése", lambda: self._remove_selected(lb),
                      "#9AB7A4", "#7E9C8A", small=True).pack(anchor="e", pady=(4, 0))
         return lb
@@ -375,6 +412,18 @@ class App:
     def _remove_selected(self, lb) -> None:
         for i in reversed(lb.curselection()):
             lb.delete(i)
+
+    def _on_wheel(self, event) -> None:
+        """Scroll the page, unless the pointer is over a widget that scrolls
+        itself (the log or a source list)."""
+        if self.root.winfo_containing(event.x_root, event.y_root) in self._self_scroll:
+            return
+        if event.num == 4:
+            self.canvas.yview_scroll(-1, "units")
+        elif event.num == 5:
+            self.canvas.yview_scroll(1, "units")
+        else:
+            self.canvas.yview_scroll(-1 if event.delta > 0 else 1, "units")
 
     def _log(self, msg: str) -> None:
         """Thread-safe: enqueue a log line (drained on the main thread)."""
