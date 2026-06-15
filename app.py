@@ -14,7 +14,6 @@ from __future__ import annotations
 
 import queue
 import random
-import re
 import threading
 import time
 import tkinter as tk
@@ -22,8 +21,25 @@ import tkinter.font as tkfont
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 
-from tsr import config, scraper, storage
+from tsr import BASE, config, scraper, storage
 from tsr.scraper import ScrapeError
+
+# Friendly dropdown presets: label -> ready-made listing URL template.
+CATEGORY_PRESETS: list[tuple[str, str]] = [
+    ("Sims 4 – Modok", f"{BASE}/downloads/browse/category/sims4-mods/page/#"),
+    ("Sims 4 – Ruhák", f"{BASE}/downloads/browse/category/sims4-clothing/page/#"),
+    ("Sims 4 – Frizurák", f"{BASE}/downloads/browse/category/sims4-hair-hairstyles/page/#"),
+    ("Sims 4 – Smink", f"{BASE}/downloads/browse/category/sims4-makeup/page/#"),
+    ("Sims 4 – Kiegészítők", f"{BASE}/downloads/browse/category/sims4-accessories/page/#"),
+    ("Sims 4 – Objektumok", f"{BASE}/downloads/browse/category/sims4-objects/page/#"),
+    ("Sims 4 – Minden", f"{BASE}/downloads/browse/category/sims4/page/#"),
+]
+
+# A few well-known creators offered as dropdown suggestions.
+CREATOR_SUGGESTIONS: list[str] = [
+    "Leah_Lillith", "SIMcredible!", "busra-tr", "VentaStudio",
+    "plumbobkingdom", "MissValentine142", "RayDesign9",
+]
 
 TOS_NOTICE = (
     "Ez az eszköz a thesimsresource.com normál, ingyenes letöltési folyamatát "
@@ -80,6 +96,7 @@ class App:
         self.f_body = tkfont.Font(family=body, size=12)
         self.f_hint = tkfont.Font(family=body, size=10, slant="italic")
         self.f_btn = tkfont.Font(family=head, size=15, weight="bold")
+        self.f_btn_sm = tkfont.Font(family=head, size=12, weight="bold")
         self.f_mono = tkfont.Font(family="Menlo" if "Menlo" in fams else body, size=10)
 
         style = ttk.Style()
@@ -110,14 +127,6 @@ class App:
         tk.Label(parent, text=text, bg=CARD, fg=MUTED, font=self.f_hint,
                  anchor="w", justify="left").pack(fill="x", pady=(2, 0))
 
-    def _textbox(self, parent, height: int) -> tk.Text:
-        t = tk.Text(parent, height=height, wrap="none", font=self.f_body,
-                    bg="#FBFFFC", fg=INK, relief="flat", highlightthickness=1,
-                    highlightbackground=BORDER, highlightcolor=GREEN,
-                    padx=8, pady=6, insertbackground=INK)
-        t.pack(fill="x")
-        return t
-
     def _check(self, parent, text, var, cmd=None):
         return tk.Checkbutton(
             parent, text=text, variable=var, command=cmd, bg=CARD, fg=INK,
@@ -135,12 +144,13 @@ class App:
     def _label(self, parent, text):
         return tk.Label(parent, text=text, bg=CARD, fg=INK, font=self.f_body)
 
-    def _button(self, parent, text, cmd, color, color_dk):
+    def _button(self, parent, text, cmd, color, color_dk, small=False):
         return tk.Button(
-            parent, text=text, command=cmd, font=self.f_btn, fg="white", bg=color,
+            parent, text=text, command=cmd,
+            font=self.f_btn_sm if small else self.f_btn, fg="white", bg=color,
             activebackground=color_dk, activeforeground="white", relief="flat",
-            bd=0, padx=22, pady=10, cursor="hand2", highlightthickness=0,
-            disabledforeground="#EaEaEa",
+            bd=0, padx=(12 if small else 22), pady=(5 if small else 10),
+            cursor="hand2", highlightthickness=0, disabledforeground="#EaEaEa",
         )
 
     def _plumbob(self, parent) -> tk.Canvas:
@@ -171,16 +181,22 @@ class App:
 
         # --- Sources card -------------------------------------------------
         src = self._card(body, "🎯 Mit töltsünk le?")
-        tk.Label(src, text="👤  Alkotók  (egy név soronként)", bg=CARD, fg=INK,
+
+        tk.Label(src, text="👤  Alkotók", bg=CARD, fg=INK, font=self.f_body,
+                 anchor="w").pack(fill="x")
+        self.creator_combo = self._make_add_row(src, CREATOR_SUGGESTIONS, self._add_creator)
+        self._hint(src, "Válassz a listából vagy írd be a nevet (profil URL-ben szereplő), majd ➕.")
+        self.creators_list = self._make_listbox(src, 4)
+
+        tk.Frame(src, bg=CARD, height=12).pack()
+
+        tk.Label(src, text="🔗  Linkek / kategóriák", bg=CARD, fg=INK,
                  font=self.f_body, anchor="w").pack(fill="x")
-        self.creator_text = self._textbox(src, height=3)
-        self._hint(src, "Pl. Leah_Lillith — a profil URL-jében szereplő név. "
-                        "Az app megkeresi és letölti az összes Sims 4 munkáját.")
-        tk.Frame(src, bg=CARD, height=8).pack()
-        tk.Label(src, text="🔗  Vagy konkrét linkek  (egy URL soronként, # = oldalszám)",
-                 bg=CARD, fg=INK, font=self.f_body, anchor="w").pack(fill="x")
-        self.url_text = self._textbox(src, height=3)
-        self._hint(src, "Pl. .../downloads/browse/category/sims4-mods/page/#")
+        self._preset_map = {label: url for label, url in CATEGORY_PRESETS}
+        self.link_combo = self._make_add_row(
+            src, [label for label, _ in CATEGORY_PRESETS], self._add_link)
+        self._hint(src, "Válassz kész kategóriát vagy illessz be saját URL-t (# = oldalszám), majd ➕.")
+        self.links_list = self._make_listbox(src, 4)
 
         # --- Folder card --------------------------------------------------
         dst = self._card(body, "📁 Hova mentsen?")
@@ -265,15 +281,17 @@ class App:
         creators = c.get("creators") or []
         if isinstance(creators, str):
             creators = [creators]
-        creators = [str(x).strip() for x in creators if str(x).strip()]
-        if creators:
-            self.creator_text.delete("1.0", "end")
-            self.creator_text.insert("1.0", "\n".join(creators))
+        for name in (str(x).strip().lstrip("@") for x in creators):
+            if name and name not in self._list_values(self.creators_list):
+                self.creators_list.insert("end", name)
 
-        urls = config.entry_urls(c)
-        if urls:
-            self.url_text.delete("1.0", "end")
-            self.url_text.insert("1.0", "\n".join(urls))
+        for url in config.entry_urls(c):
+            try:
+                url = scraper.validate_entry_url(url)
+            except ScrapeError:
+                continue
+            if url not in self._list_values(self.links_list):
+                self.links_list.insert("end", url)
 
         def _set(key, var, cast):
             if key in c:
@@ -302,6 +320,62 @@ class App:
         if chosen:
             self.folder_var.set(chosen)
 
+    # -- source list widgets ----------------------------------------------
+    def _make_add_row(self, parent, values, on_add):
+        row = tk.Frame(parent, bg=CARD)
+        row.pack(fill="x", pady=(2, 0))
+        combo = ttk.Combobox(row, values=list(values), font=self.f_body)
+        combo.pack(side="left", fill="x", expand=True, ipady=3)
+        combo.bind("<Return>", lambda _e: on_add())
+        self._button(row, "➕ Hozzáad", on_add, GREEN, GREEN_DK, small=True).pack(
+            side="left", padx=(8, 0))
+        return combo
+
+    def _make_listbox(self, parent, height):
+        fr = tk.Frame(parent, bg=CARD)
+        fr.pack(fill="x", pady=(4, 0))
+        lb = tk.Listbox(
+            fr, height=height, font=self.f_body, bg="#FBFFFC", fg=INK, relief="flat",
+            highlightthickness=1, highlightbackground=BORDER, activestyle="none",
+            selectbackground=GREEN, selectforeground="white",
+        )
+        lb.pack(side="left", fill="x", expand=True)
+        sb = ttk.Scrollbar(fr, command=lb.yview)
+        sb.pack(side="right", fill="y")
+        lb.config(yscrollcommand=sb.set)
+        lb.bind("<Double-Button-1>", lambda _e: self._remove_selected(lb))
+        self._button(parent, "✕ Kijelölt törlése", lambda: self._remove_selected(lb),
+                     "#9AB7A4", "#7E9C8A", small=True).pack(anchor="e", pady=(4, 0))
+        return lb
+
+    @staticmethod
+    def _list_values(lb) -> list[str]:
+        return list(lb.get(0, "end"))
+
+    def _add_creator(self) -> None:
+        name = self.creator_combo.get().strip().lstrip("@")
+        if name and name not in self._list_values(self.creators_list):
+            self.creators_list.insert("end", name)
+        self.creator_combo.set("")
+
+    def _add_link(self) -> None:
+        raw = self.link_combo.get().strip()
+        if not raw:
+            return
+        url = self._preset_map.get(raw, raw)
+        try:
+            url = scraper.validate_entry_url(url)
+        except ScrapeError as exc:
+            messagebox.showerror("Érvénytelen URL", str(exc))
+            return
+        if url not in self._list_values(self.links_list):
+            self.links_list.insert("end", url)
+        self.link_combo.set("")
+
+    def _remove_selected(self, lb) -> None:
+        for i in reversed(lb.curselection()):
+            lb.delete(i)
+
     def _log(self, msg: str) -> None:
         """Thread-safe: enqueue a log line (drained on the main thread)."""
         self.q.put(("log", msg))
@@ -311,20 +385,12 @@ class App:
         if self.worker and self.worker.is_alive():
             return
 
-        creators = [c.strip().lstrip("@") for c in
-                    re.split(r"[\n,]+", self.creator_text.get("1.0", "end")) if c.strip()]
-        url_text = self.url_text.get("1.0", "end")
-        urls: list[str] = []
-        if url_text.strip():
-            try:
-                urls = scraper.parse_entry_urls(url_text)
-            except ScrapeError as exc:
-                messagebox.showerror("Érvénytelen URL", str(exc))
-                return
+        creators = self._list_values(self.creators_list)
+        urls = self._list_values(self.links_list)
         if not creators and not urls:
             messagebox.showerror(
                 "Mit töltsünk le?",
-                "Adj meg legalább egy alkotót vagy egy linket.")
+                "Adj hozzá legalább egy alkotót vagy egy linket a ➕ gombbal.")
             return
 
         if not self.metadata_only_var.get() and not self._tos_acknowledged:
