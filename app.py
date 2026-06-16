@@ -63,6 +63,9 @@ INK = "#E8F4EC"         # light text
 MUTED = "#8FB3A0"       # hint text
 RED = "#E0573E"         # stop button
 RED_DK = "#BE4530"
+ONGREEN = "#06130D"     # near-black text on bright-green buttons (high contrast)
+NEUTRAL = "#33503F"     # secondary/remove button (visible on dark)
+NEUTRAL_DK = "#41624D"
 
 
 class App:
@@ -160,13 +163,13 @@ class App:
     def _label(self, parent, text):
         return tk.Label(parent, text=text, bg=CARD, fg=INK, font=self.f_body)
 
-    def _button(self, parent, text, cmd, color, color_dk, small=False):
+    def _button(self, parent, text, cmd, color, color_dk, small=False, fg="white"):
         btn = tk.Button(
             parent, text=text, command=cmd,
-            font=self.f_btn_sm if small else self.f_btn, fg="white", bg=color,
-            activebackground=color_dk, activeforeground="white", relief="flat",
+            font=self.f_btn_sm if small else self.f_btn, fg=fg, bg=color,
+            activebackground=color_dk, activeforeground=fg, relief="flat",
             bd=0, padx=(12 if small else 22), pady=(5 if small else 10),
-            cursor="hand2", highlightthickness=0, disabledforeground="#EaEaEa",
+            cursor="hand2", highlightthickness=0, disabledforeground="#7E948A",
         )
 
         def _enter(_e):
@@ -258,8 +261,8 @@ class App:
                  fg=INK, insertbackground=INK, relief="flat", highlightthickness=1,
                  highlightbackground=BORDER, highlightcolor=GREEN).pack(
                      side="left", fill="x", expand=True, ipady=5)
-        self._button(rowf, "Tallózás…", self._pick_folder, GREEN, GREEN_DK).pack(
-            side="left", padx=(10, 0))
+        self._button(rowf, "Tallózás…", self._pick_folder, GREEN, GREEN_DK,
+                     fg=ONGREEN).pack(side="left", padx=(10, 0))
 
         # --- Settings card ------------------------------------------------
         st = self._card(body, "⚙️ Beállítások")
@@ -301,9 +304,11 @@ class App:
         # --- Action buttons ----------------------------------------------
         actions = tk.Frame(body, bg=BG)
         actions.pack(fill="x", pady=(0, 10))
-        self.start_btn = self._button(actions, "▶  Letöltés indítása", self._start, GREEN, GREEN_DK)
+        self.start_btn = self._button(actions, "▶  Letöltés indítása", self._start,
+                                      GREEN, GREEN_DK, fg=ONGREEN)
         self.start_btn.pack(side="left")
-        self.stop_btn = self._button(actions, "■  Leállítás", self._stop, RED, RED_DK)
+        self.stop_btn = self._button(actions, "■  Leállítás", self._stop, RED, RED_DK,
+                                     fg="white")
         self.stop_btn.pack(side="left", padx=10)
         self.stop_btn.config(state="disabled")
 
@@ -380,8 +385,8 @@ class App:
         combo = ttk.Combobox(row, values=list(values), font=self.f_body)
         combo.pack(side="left", fill="x", expand=True, ipady=3)
         combo.bind("<Return>", lambda _e: on_add())
-        self._button(row, "➕ Hozzáad", on_add, GREEN, GREEN_DK, small=True).pack(
-            side="left", padx=(8, 0))
+        self._button(row, "➕ Hozzáad", on_add, GREEN, GREEN_DK, small=True,
+                     fg=ONGREEN).pack(side="left", padx=(8, 0))
         return combo
 
     def _make_listbox(self, parent, height):
@@ -399,7 +404,7 @@ class App:
         lb.bind("<Double-Button-1>", lambda _e: self._remove_selected(lb))
         self._self_scroll.add(lb)
         self._button(parent, "✕ Kijelölt törlése", lambda: self._remove_selected(lb),
-                     "#9AB7A4", "#7E9C8A", small=True).pack(anchor="e", pady=(4, 0))
+                     NEUTRAL, NEUTRAL_DK, small=True, fg=INK).pack(anchor="e", pady=(4, 0))
         return lb
 
     @staticmethod
