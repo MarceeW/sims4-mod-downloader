@@ -51,15 +51,16 @@ TOS_NOTICE = (
     "tartalmat tölts le, amire jogosult vagy.\n\nFolytatod?"
 )
 
-# -- Sims-flavored palette -------------------------------------------------
-BG = "#E7F5EC"          # soft mint window background
-CARD = "#FFFFFF"        # white panels
-BORDER = "#BFE3CB"      # subtle green border
-GREEN = "#3DBA4E"       # plumbob green (accents/buttons)
-GREEN_DK = "#2C8E3A"    # darker green (hover/headings)
-GREEN_LT = "#D5F0DC"    # light green (progress trough)
-INK = "#1F3A2A"         # dark text
-MUTED = "#6E8A78"       # hint text
+# -- Sims-flavored dark palette --------------------------------------------
+BG = "#10211B"          # dark green-charcoal window background
+CARD = "#1A2D26"        # dark panels
+INPUT = "#13241D"       # input fields / lists
+BORDER = "#2E4A3D"      # subtle green border
+GREEN = "#46C95A"       # plumbob green (accents/buttons) — bright for dark bg
+GREEN_DK = "#2E9E42"    # darker green (hover/headings)
+GREEN_LT = "#1F3B2C"    # dark green (progress trough)
+INK = "#E8F4EC"         # light text
+MUTED = "#8FB3A0"       # hint text
 RED = "#E0573E"         # stop button
 RED_DK = "#BE4530"
 
@@ -110,6 +111,20 @@ class App:
             bordercolor=GREEN_LT, lightcolor=GREEN, darkcolor=GREEN_DK,
             thickness=20,
         )
+        # Dark combobox (field + dropdown list) and scrollbar.
+        style.configure("TCombobox", fieldbackground=INPUT, background=CARD,
+                        foreground=INK, arrowcolor=GREEN, bordercolor=BORDER,
+                        lightcolor=BORDER, darkcolor=BORDER)
+        style.map("TCombobox",
+                  fieldbackground=[("readonly", INPUT)],
+                  foreground=[("disabled", MUTED)])
+        self.root.option_add("*TCombobox*Listbox.background", INPUT)
+        self.root.option_add("*TCombobox*Listbox.foreground", INK)
+        self.root.option_add("*TCombobox*Listbox.selectBackground", GREEN)
+        self.root.option_add("*TCombobox*Listbox.selectForeground", "white")
+        for sb in ("Vertical.TScrollbar", "Horizontal.TScrollbar"):
+            style.configure(sb, background=CARD, troughcolor=BG,
+                            bordercolor=BG, arrowcolor=INK)
 
     def _card(self, parent, title: str, expand: bool = False):
         """A titled white panel; returns the inner frame to fill with widgets."""
@@ -130,15 +145,16 @@ class App:
     def _check(self, parent, text, var, cmd=None):
         return tk.Checkbutton(
             parent, text=text, variable=var, command=cmd, bg=CARD, fg=INK,
-            activebackground=CARD, activeforeground=GREEN_DK, selectcolor="#FFFFFF",
+            activebackground=CARD, activeforeground=GREEN, selectcolor=INPUT,
             font=self.f_body, anchor="w", highlightthickness=0, bd=0,
         )
 
     def _spin(self, parent, frm, to, var, width, inc=1):
         return tk.Spinbox(
             parent, from_=frm, to=to, textvariable=var, width=width, increment=inc,
-            font=self.f_body, relief="flat", highlightthickness=1,
-            highlightbackground=BORDER, highlightcolor=GREEN, buttonbackground=GREEN_LT,
+            font=self.f_body, relief="flat", bg=INPUT, fg=INK, insertbackground=INK,
+            highlightthickness=1, highlightbackground=BORDER, highlightcolor=GREEN,
+            buttonbackground=CARD, readonlybackground=INPUT,
         )
 
     def _label(self, parent, text):
@@ -238,9 +254,10 @@ class App:
         rowf = tk.Frame(dst, bg=CARD)
         rowf.pack(fill="x")
         self.folder_var = tk.StringVar(value=str(Path.cwd() / "downloads"))
-        tk.Entry(rowf, textvariable=self.folder_var, font=self.f_body, bg="#FBFFFC",
-                 fg=INK, relief="flat", highlightthickness=1, highlightbackground=BORDER,
-                 highlightcolor=GREEN).pack(side="left", fill="x", expand=True, ipady=5)
+        tk.Entry(rowf, textvariable=self.folder_var, font=self.f_body, bg=INPUT,
+                 fg=INK, insertbackground=INK, relief="flat", highlightthickness=1,
+                 highlightbackground=BORDER, highlightcolor=GREEN).pack(
+                     side="left", fill="x", expand=True, ipady=5)
         self._button(rowf, "Tallózás…", self._pick_folder, GREEN, GREEN_DK).pack(
             side="left", padx=(10, 0))
 
@@ -371,7 +388,7 @@ class App:
         fr = tk.Frame(parent, bg=CARD)
         fr.pack(fill="x", pady=(4, 0))
         lb = tk.Listbox(
-            fr, height=height, font=self.f_body, bg="#FBFFFC", fg=INK, relief="flat",
+            fr, height=height, font=self.f_body, bg=INPUT, fg=INK, relief="flat",
             highlightthickness=1, highlightbackground=BORDER, activestyle="none",
             selectbackground=GREEN, selectforeground="white",
         )
